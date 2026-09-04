@@ -11,7 +11,7 @@ permissions:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Validate required secrets
         env:
@@ -60,11 +60,58 @@ jobs:
         env:
           BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
         run: |
+          set -euo pipefail
           openssl enc -aes-256-cbc -salt -pbkdf2 \
             -in jarvis-legal-enterprise.dump \
             -out jarvis-legal-enterprise.dump.enc \
             -pass env:BACKUP_ENCRYPTION_PASSWORD
           rm -f jarvis-legal-enterprise.dump
+
+      - name: Verify decryptability
+        env:
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        run: |
+          set -euo pipefail
+          openssl enc -d -aes-256-cbc -pbkdf2 \
+            -in jarvis-legal-enterprise.dump.enc \
+            -out jarvis-legal-enterprise.verify.dump \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          test -s jarvis-legal-enterprise.verify.dump
+
+      - name: Restore drill in isolated PostgreSQL 17
+        run: |
+          set -euo pipefail
+          docker rm -f jarvis-restore-test >/dev/null 2>&1 || true
+          docker run -d --name jarvis-restore-test \
+            -e POSTGRES_PASSWORD=restore_test_only \
+            -e POSTGRES_DB=jarvis_restore_test \
+            -p 55432:5432 \
+            postgres:17
+
+          for i in $(seq 1 30); do
+            if docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test
+          docker cp jarvis-legal-enterprise.verify.dump jarvis-restore-test:/tmp/restore.dump
+          docker exec jarvis-restore-test \
+            pg_restore \
+              --username=postgres \
+              --dbname=jarvis_restore_test \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              /tmp/restore.dump
+
+          docker exec jarvis-restore-test \
+            psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
+            -c "SELECT current_database(), count(*) AS public_tables FROM pg_tables WHERE schemaname='public';"
+
+          docker rm -f jarvis-restore-test
+          rm -f jarvis-legal-enterprise.verify.dump
 
       - name: Upload encrypted backup artifact
         uses: actions/upload-artifact@v4
