@@ -38,10 +38,7 @@ jobs:
 
           case "$DB_URL" in
             postgresql://*|postgres://*) ;;
-            *)
-              echo "SUPABASE_DB_URL is not a PostgreSQL URI after normalization."
-              exit 1
-              ;;
+            *) echo "SUPABASE_DB_URL is not a PostgreSQL URI after normalization."; exit 1 ;;
           esac
 
           if printf '%s' "$DB_URL" | grep -q '\[YOUR-PASSWORD\]'; then
@@ -85,8 +82,9 @@ jobs:
           docker run -d --name jarvis-restore-test \
             -e POSTGRES_PASSWORD=restore_test_only \
             -e POSTGRES_DB=jarvis_restore_test \
-            -p 55432:5432 \
             postgres:17
+
+          trap 'docker rm -f jarvis-restore-test >/dev/null 2>&1 || true' EXIT
 
           for i in $(seq 1 30); do
             if docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test >/dev/null 2>&1; then
@@ -97,6 +95,15 @@ jobs:
 
           docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test
           docker cp jarvis-legal-enterprise.verify.dump jarvis-restore-test:/tmp/restore.dump
+
+          # Supabase backups can contain provider-specific extensions (for example
+          # supabase_vault) that are not installed in the stock PostgreSQL image.
+          # List the archive, remove extension creation/comment entries from the
+          # restore list, then restore all remaining portable database objects.
+          docker exec jarvis-restore-test pg_restore -l /tmp/restore.dump > restore.list
+          sed -E '/ EXTENSION /d; / COMMENT - EXTENSION /d' restore.list > restore.portable.list
+          docker cp restore.portable.list jarvis-restore-test:/tmp/restore.portable.list
+
           docker exec jarvis-restore-test \
             pg_restore \
               --username=postgres \
@@ -104,16 +111,17 @@ jobs:
               --no-owner \
               --no-privileges \
               --exit-on-error \
+              --use-list=/tmp/restore.portable.list \
               /tmp/restore.dump
 
           docker exec jarvis-restore-test \
             psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
             -c "SELECT current_database(), count(*) AS public_tables FROM pg_tables WHERE schemaname='public';"
 
-          docker rm -f jarvis-restore-test
-          rm -f jarvis-legal-enterprise.verify.dump
+          rm -f jarvis-legal-enterprise.verify.dump restore.list restore.portable.list
 
       - name: Upload encrypted backup artifact
+        if: ${{ always() && hashFiles('jarvis-legal-enterprise.dump.enc') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: jarvis-legal-enterprise-${{ github.run_id }}
