@@ -26,11 +26,37 @@ jobs:
           test -n "$SUPABASE_DB_URL" || (echo "Missing SUPABASE_DB_URL" && exit 1)
           test -n "$BACKUP_ENCRYPTION_PASSWORD" || (echo "Missing BACKUP_ENCRYPTION_PASSWORD" && exit 1)
 
-      - name: Create logical backup
+      - name: Normalize database connection
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          RAW_SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          pg_dump "$SUPABASE_DB_URL" \
+          DB_URL="$RAW_SUPABASE_DB_URL"
+          DB_URL="${DB_URL//$'\r'/}"
+          DB_URL="${DB_URL//$'\n'/}"
+          DB_URL="${DB_URL#SUPABASE_DB_URL=}"
+          DB_URL="${DB_URL#\"}"
+          DB_URL="${DB_URL%\"}"
+          DB_URL="${DB_URL#\'}"
+          DB_URL="${DB_URL%\'}"
+
+          case "$DB_URL" in
+            postgresql://*|postgres://*) ;;
+            *)
+              echo "SUPABASE_DB_URL is not a PostgreSQL URI. Edit the GitHub secret and paste the complete Supabase Session pooler URI beginning with postgresql://"
+              exit 1
+              ;;
+          esac
+
+          if printf '%s' "$DB_URL" | grep -q '\[YOUR-PASSWORD\]'; then
+            echo "SUPABASE_DB_URL still contains the [YOUR-PASSWORD] placeholder. Replace it with the real database password in the GitHub secret."
+            exit 1
+          fi
+
+          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
+
+      - name: Create logical backup
+        run: |
+          pg_dump --dbname="$DB_URL" \
             --format=custom \
             --no-owner \
             --no-privileges \
