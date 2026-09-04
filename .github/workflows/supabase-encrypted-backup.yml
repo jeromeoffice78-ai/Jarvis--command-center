@@ -91,18 +91,49 @@ jobs:
           done
 
           docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test
+
+          # Supabase installs many extensions into this schema. The portable
+          # restore intentionally skips Supabase-managed schema objects, so
+          # create the schema explicitly before restoring extension metadata.
+          docker exec jarvis-restore-test \
+            psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
+            -c 'CREATE SCHEMA IF NOT EXISTS extensions;'
+
           docker cp jarvis-legal-enterprise.verify.dump jarvis-restore-test:/tmp/restore.dump
 
-          # Build a portable restore list. Supabase platform-managed schemas and
-          # the supabase_vault extension are intentionally omitted because they
-          # are not available in a stock PostgreSQL 17 container.
+          # Build a portable restore list. Supabase platform-managed schemas are
+          # omitted. Extension entries are retained only when the stock
+          # PostgreSQL 17 image reports that the extension is available.
           docker exec jarvis-restore-test pg_restore -l /tmp/restore.dump > restore.list
+
           awk '
-            / EXTENSION - supabase_vault / {next}
-            / COMMENT - EXTENSION supabase_vault / {next}
             /(^|[[:space:]])(vault|auth|storage|realtime|extensions|supabase_functions|supabase_migrations|graphql|graphql_public)([[:space:]]|$)/ {next}
             {print}
           ' restore.list > restore.portable.list
+
+          : > unavailable.extensions
+          awk '/ EXTENSION - / {print $NF}' restore.list | sort -u | while read -r ext; do
+            test -n "$ext" || continue
+            if ! docker exec jarvis-restore-test \
+              psql -U postgres -d jarvis_restore_test -Atqc \
+              "SELECT 1 FROM pg_available_extensions WHERE name = '$ext'" | grep -qx '1'; then
+              echo "$ext" >> unavailable.extensions
+            fi
+          done
+
+          if test -s unavailable.extensions; then
+            echo "Skipping extensions unavailable in stock PostgreSQL 17:"
+            cat unavailable.extensions
+            while read -r ext; do
+              awk -v ext="$ext" '
+                index($0, " EXTENSION - " ext) {next}
+                index($0, " COMMENT - EXTENSION " ext) {next}
+                {print}
+              ' restore.portable.list > restore.portable.next
+              mv restore.portable.next restore.portable.list
+            done < unavailable.extensions
+          fi
+
           test -s restore.portable.list
           docker cp restore.portable.list jarvis-restore-test:/tmp/restore.portable.list
 
@@ -120,7 +151,7 @@ jobs:
             psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
             -c "SELECT current_database(), count(*) AS public_tables FROM pg_tables WHERE schemaname='public';"
 
-          rm -f jarvis-legal-enterprise.verify.dump restore.list restore.portable.list
+          rm -f jarvis-legal-enterprise.verify.dump restore.list restore.portable.list unavailable.extensions
 
       - name: Upload encrypted backup artifact
         if: ${{ always() && hashFiles('jarvis-legal-enterprise.dump.enc') != '' }}
