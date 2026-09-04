@@ -93,10 +93,19 @@ jobs:
           docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test
           docker cp jarvis-legal-enterprise.verify.dump jarvis-restore-test:/tmp/restore.dump
 
-          # This is a portability drill against stock PostgreSQL, not a Supabase
-          # platform reconstruction. Supabase-managed schemas depend on extensions
-          # and services absent from postgres:17. Exclude those provider schemas
-          # while fully restoring application/public objects.
+          # Build a portable restore list. Supabase platform-managed schemas and
+          # the supabase_vault extension are intentionally omitted because they
+          # are not available in a stock PostgreSQL 17 container.
+          docker exec jarvis-restore-test pg_restore -l /tmp/restore.dump > restore.list
+          awk '
+            / EXTENSION - supabase_vault / {next}
+            / COMMENT - EXTENSION supabase_vault / {next}
+            /(^|[[:space:]])(vault|auth|storage|realtime|extensions|supabase_functions|supabase_migrations|graphql|graphql_public)([[:space:]]|$)/ {next}
+            {print}
+          ' restore.list > restore.portable.list
+          test -s restore.portable.list
+          docker cp restore.portable.list jarvis-restore-test:/tmp/restore.portable.list
+
           docker exec jarvis-restore-test \
             pg_restore \
               --username=postgres \
@@ -104,22 +113,14 @@ jobs:
               --no-owner \
               --no-privileges \
               --exit-on-error \
-              --exclude-schema=vault \
-              --exclude-schema=auth \
-              --exclude-schema=storage \
-              --exclude-schema=realtime \
-              --exclude-schema=extensions \
-              --exclude-schema=supabase_functions \
-              --exclude-schema=supabase_migrations \
-              --exclude-schema=graphql \
-              --exclude-schema=graphql_public \
+              --use-list=/tmp/restore.portable.list \
               /tmp/restore.dump
 
           docker exec jarvis-restore-test \
             psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
             -c "SELECT current_database(), count(*) AS public_tables FROM pg_tables WHERE schemaname='public';"
 
-          rm -f jarvis-legal-enterprise.verify.dump
+          rm -f jarvis-legal-enterprise.verify.dump restore.list restore.portable.list
 
       - name: Upload encrypted backup artifact
         if: ${{ always() && hashFiles('jarvis-legal-enterprise.dump.enc') != '' }}
