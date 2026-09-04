@@ -7,13 +7,27 @@ Production control repository for Jarvis Legal Enterprise.
 - Region: `us-east-1`
 - PostgreSQL: 17
 - Production Edge Functions:
-  - `chairman-app` — Chairman command center, JWT verification enabled.
+  - `chairman-app` — legacy Chairman command center, JWT verification enabled.
+  - `chairman-command` — current Chairman Command v2 interface with authenticated MASTER_ADMIN gating and live RLS-backed enterprise data.
   - `password-guard` — breached-password enforcement gateway for signup and password changes.
   - `account-portal` — public secure account UI for signup, sign-in, password changes, session refresh, and sign-out.
 - Security baseline: entitlement RLS hardened; privileged helper RPC execution revoked from client roles.
 - Database hardening: covering indexes added for previously unindexed public foreign keys.
 - RLS performance: repeated `auth.uid()` / role lookups in flagged policies converted to initialization-plan-safe expressions.
 - Current public schema: 26 tables.
+
+## Chairman Command v2
+`supabase/functions/chairman-command/index.ts` is the current Chairman-facing control surface.
+
+It provides:
+- MASTER_ADMIN-only access after Supabase Auth sign-in and profile verification.
+- Live dashboard counts for matters, legal documents, evidence, and subscriptions.
+- Chairman briefing assembled from active matters, board-attention messages, unresolved resolutions, and upcoming deadlines.
+- Board member, board message, and board resolution views.
+- RLS-authorized matter creation.
+- Subscription-plan, subscription-status, and estimated active MRR views.
+- Chairman password changes routed through the independent `password-guard` breached-password screening gateway.
+- Browser session tokens stored in `sessionStorage`, not persistent local storage.
 
 ## Database migrations
 Production migrations are tracked under `supabase/migrations/` as they are applied.
@@ -37,7 +51,7 @@ The restore drill decrypts the archive, restores portable pre-data and table dat
 Download an encrypted backup artifact, decrypt it locally, then restore with `pg_restore` to an approved recovery target. Never test restores directly against production first.
 
 ## Security
-Do not commit service-role keys, database passwords, Stripe secrets, API keys, or backup encryption passwords to this repository.
+Do not commit service-role keys, database passwords, user passwords, Stripe secrets, API secrets, or backup encryption passwords to this repository.
 
 ### External breached-password protection
 Jarvis Legal Enterprise does not depend on Supabase's paid leaked-password protection feature. Compromised-password screening is implemented independently using the Have I Been Pwned Pwned Passwords range API.
@@ -56,4 +70,7 @@ Production password policy:
 
 The public `account-portal` routes signup and password changes through `password-guard`, uses a publishable API key only, and keeps session tokens in browser `sessionStorage` rather than persistent local storage.
 
-The external source is monitored by `.github/workflows/pwned-password-source-check.yml`, which validates the integration on changes, on demand, and weekly.
+## CI
+`.github/workflows/edge-functions-ci.yml` type-checks the production Edge Functions, validates the reusable password-security module, and rejects obvious committed backend secrets whenever Edge Function or security code changes.
+
+The external breach source is separately monitored by `.github/workflows/pwned-password-source-check.yml`, which validates the HIBP integration on changes, on demand, and weekly.
