@@ -26,10 +26,11 @@ jobs:
           test -n "$SUPABASE_DB_URL" || (echo "Missing SUPABASE_DB_URL" && exit 1)
           test -n "$BACKUP_ENCRYPTION_PASSWORD" || (echo "Missing BACKUP_ENCRYPTION_PASSWORD" && exit 1)
 
-      - name: Normalize database connection
+      - name: Create logical backup
         env:
           RAW_SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
+          set -euo pipefail
           DB_URL="$RAW_SUPABASE_DB_URL"
           DB_URL="${DB_URL//$'\r'/}"
           DB_URL="${DB_URL//$'\n'/}"
@@ -52,10 +53,6 @@ jobs:
             exit 1
           fi
 
-          echo "DB_URL=$DB_URL" >> "$GITHUB_ENV"
-
-      - name: Create logical backup
-        run: |
           pg_dump --dbname="$DB_URL" \
             --format=custom \
             --no-owner \
