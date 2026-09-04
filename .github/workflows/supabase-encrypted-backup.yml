@@ -140,6 +140,12 @@ jobs:
           test -s restore.portable.list
           docker cp restore.portable.list jarvis-restore-test:/tmp/restore.portable.list
 
+          # Restore pre-data and table data with strict failure handling. We do
+          # not restore post-data in this stock container because Supabase user
+          # schemas can contain FKs, RLS policies, and triggers that depend on
+          # platform-managed schemas such as auth. The encrypted backup itself
+          # remains complete; this drill validates archive readability plus
+          # portable schema and data recovery.
           docker exec jarvis-restore-test \
             pg_restore \
               --username=postgres \
@@ -147,8 +153,25 @@ jobs:
               --no-owner \
               --no-privileges \
               --exit-on-error \
+              --section=pre-data \
               --use-list=/tmp/restore.portable.list \
               /tmp/restore.dump
+
+          docker exec jarvis-restore-test \
+            pg_restore \
+              --username=postgres \
+              --dbname=jarvis_restore_test \
+              --no-owner \
+              --no-privileges \
+              --exit-on-error \
+              --section=data \
+              --use-list=/tmp/restore.portable.list \
+              /tmp/restore.dump
+
+          PUBLIC_TABLES="$(docker exec jarvis-restore-test \
+            psql -U postgres -d jarvis_restore_test -Atqc \
+            "SELECT count(*) FROM pg_tables WHERE schemaname='public';")"
+          test "${PUBLIC_TABLES:-0}" -gt 0 || (echo "Portable restore produced no public tables." && exit 1)
 
           docker exec jarvis-restore-test \
             psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
