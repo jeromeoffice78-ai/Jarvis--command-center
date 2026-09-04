@@ -1,0 +1,56 @@
+name: Supabase encrypted backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Validate required secrets
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        run: |
+          test -n "$SUPABASE_DB_URL" || (echo "Missing SUPABASE_DB_URL" && exit 1)
+          test -n "$BACKUP_ENCRYPTION_PASSWORD" || (echo "Missing BACKUP_ENCRYPTION_PASSWORD" && exit 1)
+
+      - name: Create logical backup
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          pg_dump "$SUPABASE_DB_URL" \
+            --format=custom \
+            --no-owner \
+            --no-privileges \
+            --no-subscriptions \
+            --file=jarvis-legal-enterprise.dump
+
+      - name: Encrypt backup
+        env:
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        run: |
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -in jarvis-legal-enterprise.dump \
+            -out jarvis-legal-enterprise.dump.enc \
+            -pass env:BACKUP_ENCRYPTION_PASSWORD
+          rm -f jarvis-legal-enterprise.dump
+
+      - name: Upload encrypted backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-legal-enterprise-${{ github.run_id }}
+          path: jarvis-legal-enterprise.dump.enc
+          retention-days: 14
+          if-no-files-found: error
