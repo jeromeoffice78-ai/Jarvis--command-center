@@ -2,6 +2,9 @@ name: Supabase encrypted backup
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/supabase-encrypted-backup.yml'
   schedule:
     - cron: '17 6 * * *'
 
@@ -178,7 +181,7 @@ jobs:
 
       - name: Upload encrypted backup artifact
         if: ${{ always() && hashFiles('jarvis-legal-enterprise.dump.enc') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: jarvis-legal-enterprise-${{ github.run_id }}
           path: jarvis-legal-enterprise.dump.enc
