@@ -1,0 +1,43 @@
+name: Edge Functions CI
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'supabase/functions/**'
+      - 'security/**'
+      - '.github/workflows/edge-functions-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check production Edge Functions
+        run: |
+          deno check \
+            supabase/functions/password-guard/index.ts \
+            supabase/functions/account-portal/index.ts \
+            supabase/functions/chairman-command/index.ts
+
+      - name: Parse reusable password security module
+        run: node --check security/pwned-password.mjs
+
+      - name: Reject obvious committed backend secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -nE 'sb_secret_[A-Za-z0-9_-]{12,}|sk_(live|test)_[A-Za-z0-9]+' \
+            supabase/functions security; then
+            echo 'Potential backend secret detected in committed source.'
+            exit 1
+          fi
