@@ -39,11 +39,12 @@ jobs:
           DB_URL="${DB_URL%\"}"
           DB_URL="${DB_URL#\'}"
           DB_URL="${DB_URL%\'}"
+          DB_URL="$(printf '%s' "$DB_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
 
           case "$DB_URL" in
             postgresql://*|postgres://*) ;;
             *)
-              echo "SUPABASE_DB_URL is not a PostgreSQL URI. Edit the GitHub secret and paste the complete Supabase Session pooler URI beginning with postgresql://"
+              echo "SUPABASE_DB_URL is not a PostgreSQL URI after normalization. Edit the GitHub secret and paste only the complete Supabase Session pooler URI beginning with postgresql://"
               exit 1
               ;;
           esac
