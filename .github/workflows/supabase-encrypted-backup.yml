@@ -2,6 +2,10 @@ name: Supabase encrypted backup
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/supabase-encrypted-backup.yml'
   schedule:
     - cron: '17 6 * * *'
 
