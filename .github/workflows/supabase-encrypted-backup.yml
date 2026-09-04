@@ -13,11 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
-
       - name: Validate required secrets
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -26,7 +21,7 @@ jobs:
           test -n "$SUPABASE_DB_URL" || (echo "Missing SUPABASE_DB_URL" && exit 1)
           test -n "$BACKUP_ENCRYPTION_PASSWORD" || (echo "Missing BACKUP_ENCRYPTION_PASSWORD" && exit 1)
 
-      - name: Create logical backup
+      - name: Create logical backup with PostgreSQL 17
         env:
           RAW_SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
@@ -44,22 +39,22 @@ jobs:
           case "$DB_URL" in
             postgresql://*|postgres://*) ;;
             *)
-              echo "SUPABASE_DB_URL is not a PostgreSQL URI after normalization. Edit the GitHub secret and paste only the complete Supabase Session pooler URI beginning with postgresql://"
+              echo "SUPABASE_DB_URL is not a PostgreSQL URI after normalization."
               exit 1
               ;;
           esac
 
           if printf '%s' "$DB_URL" | grep -q '\[YOUR-PASSWORD\]'; then
-            echo "SUPABASE_DB_URL still contains the [YOUR-PASSWORD] placeholder. Replace it with the real database password in the GitHub secret."
+            echo "SUPABASE_DB_URL still contains the [YOUR-PASSWORD] placeholder."
             exit 1
           fi
 
-          pg_dump --dbname="$DB_URL" \
-            --format=custom \
-            --no-owner \
-            --no-privileges \
-            --no-subscriptions \
-            --file=jarvis-legal-enterprise.dump
+          docker pull postgres:17
+          docker run --rm \
+            -e DB_URL="$DB_URL" \
+            -v "$PWD:/backup" \
+            postgres:17 \
+            bash -lc 'pg_dump --dbname="$DB_URL" --format=custom --no-owner --no-privileges --no-subscriptions --file=/backup/jarvis-legal-enterprise.dump'
 
       - name: Encrypt backup
         env:
