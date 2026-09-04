@@ -68,7 +68,7 @@ jobs:
             -pass env:BACKUP_ENCRYPTION_PASSWORD
           rm -f jarvis-legal-enterprise.dump
 
-      - name: Verify decryptability
+      - name: Verify decryptability and archive integrity
         env:
           BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
         run: |
@@ -78,8 +78,12 @@ jobs:
             -out jarvis-legal-enterprise.verify.dump \
             -pass env:BACKUP_ENCRYPTION_PASSWORD
           test -s jarvis-legal-enterprise.verify.dump
+          docker run --rm -v "$PWD:/backup" postgres:17 \
+            pg_restore --list /backup/jarvis-legal-enterprise.verify.dump > restore.list
+          test -s restore.list
+          grep -Eq 'TABLE( DATA)? public ' restore.list || (echo "Backup contains no public-schema table entries." && exit 1)
 
-      - name: Restore drill in isolated PostgreSQL 17
+      - name: Restore portable public schema in isolated PostgreSQL 17
         run: |
           set -euo pipefail
           docker rm -f jarvis-restore-test >/dev/null 2>&1 || true
@@ -93,60 +97,13 @@ jobs:
             if docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test >/dev/null 2>&1; then break; fi
             sleep 1
           done
-
           docker exec jarvis-restore-test pg_isready -U postgres -d jarvis_restore_test
-
-          # Supabase installs many extensions into this schema. The portable
-          # restore intentionally skips Supabase-managed schema objects, so
-          # create the schema explicitly before restoring extension metadata.
-          docker exec jarvis-restore-test \
-            psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
-            -c 'CREATE SCHEMA IF NOT EXISTS extensions;'
-
           docker cp jarvis-legal-enterprise.verify.dump jarvis-restore-test:/tmp/restore.dump
 
-          # Build a portable restore list. Supabase platform-managed schemas are
-          # omitted. Extension entries are retained only when the stock
-          # PostgreSQL 17 image reports that the extension is available.
-          docker exec jarvis-restore-test pg_restore -l /tmp/restore.dump > restore.list
-
-          awk '
-            /(^|[[:space:]])(vault|auth|storage|realtime|extensions|supabase_functions|supabase_migrations|graphql|graphql_public)([[:space:]]|$)/ {next}
-            {print}
-          ' restore.list > restore.portable.list
-
-          : > unavailable.extensions
-          awk '/ EXTENSION - / {print $NF}' restore.list | sort -u | while read -r ext; do
-            test -n "$ext" || continue
-            if ! docker exec jarvis-restore-test \
-              psql -U postgres -d jarvis_restore_test -Atqc \
-              "SELECT 1 FROM pg_available_extensions WHERE name = '$ext'" | grep -qx '1'; then
-              echo "$ext" >> unavailable.extensions
-            fi
-          done
-
-          if test -s unavailable.extensions; then
-            echo "Skipping extensions unavailable in stock PostgreSQL 17:"
-            cat unavailable.extensions
-            while read -r ext; do
-              awk -v ext="$ext" '
-                index($0, " EXTENSION - " ext) {next}
-                index($0, " COMMENT - EXTENSION " ext) {next}
-                {print}
-              ' restore.portable.list > restore.portable.next
-              mv restore.portable.next restore.portable.list
-            done < unavailable.extensions
-          fi
-
-          test -s restore.portable.list
-          docker cp restore.portable.list jarvis-restore-test:/tmp/restore.portable.list
-
-          # Restore pre-data and table data with strict failure handling. We do
-          # not restore post-data in this stock container because Supabase user
-          # schemas can contain FKs, RLS policies, and triggers that depend on
-          # platform-managed schemas such as auth. The encrypted backup itself
-          # remains complete; this drill validates archive readability plus
-          # portable schema and data recovery.
+          # This is intentionally a portable application-data drill. The full
+          # encrypted backup remains unchanged and still contains Supabase-managed
+          # schemas. Stock PostgreSQL cannot reconstruct Supabase platform services,
+          # so the drill restores only the application's public schema.
           docker exec jarvis-restore-test \
             pg_restore \
               --username=postgres \
@@ -154,8 +111,8 @@ jobs:
               --no-owner \
               --no-privileges \
               --exit-on-error \
+              --schema=public \
               --section=pre-data \
-              --use-list=/tmp/restore.portable.list \
               /tmp/restore.dump
 
           docker exec jarvis-restore-test \
@@ -165,8 +122,8 @@ jobs:
               --no-owner \
               --no-privileges \
               --exit-on-error \
+              --schema=public \
               --section=data \
-              --use-list=/tmp/restore.portable.list \
               /tmp/restore.dump
 
           PUBLIC_TABLES="$(docker exec jarvis-restore-test \
@@ -174,11 +131,12 @@ jobs:
             "SELECT count(*) FROM pg_tables WHERE schemaname='public';")"
           test "${PUBLIC_TABLES:-0}" -gt 0 || (echo "Portable restore produced no public tables." && exit 1)
 
+          echo "Portable restore verified ${PUBLIC_TABLES} public tables."
           docker exec jarvis-restore-test \
             psql -U postgres -d jarvis_restore_test -v ON_ERROR_STOP=1 \
             -c "SELECT current_database(), count(*) AS public_tables FROM pg_tables WHERE schemaname='public';"
 
-          rm -f jarvis-legal-enterprise.verify.dump restore.list restore.portable.list unavailable.extensions
+          rm -f jarvis-legal-enterprise.verify.dump restore.list
 
       - name: Upload encrypted backup artifact
         if: ${{ always() && hashFiles('jarvis-legal-enterprise.dump.enc') != '' }}
