@@ -1,5 +1,7 @@
 package com.jarvis.companion
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,6 +15,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -21,28 +24,57 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private var oauthCallback by mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        oauthCallback = intent?.data
         val bleScanner = BleScanner(this)
         val authClient = JarvisAuthClient()
 
         setContent {
             MaterialTheme {
-                JarvisApp(bleScanner, authClient)
+                JarvisApp(bleScanner, authClient, oauthCallback)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        oauthCallback = intent.data
     }
 }
 
 @Composable
-private fun JarvisApp(bleScanner: BleScanner, authClient: JarvisAuthClient) {
+private fun JarvisApp(bleScanner: BleScanner, authClient: JarvisAuthClient, oauthCallback: Uri?) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val devices by bleScanner.devices.collectAsState()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Sign in with your Chairman account.") }
+    var status by remember { mutableStateOf("Sign in with your Chairman Google account.") }
     var signedIn by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
+
+    LaunchedEffect(oauthCallback) {
+        val uri = oauthCallback ?: return@LaunchedEffect
+        if (uri.scheme == "jarviscompanion" && uri.host == "auth") {
+            status = "Google verified. Checking Chairman authorization…"
+            val session = withContext(Dispatchers.IO) { authClient.sessionFromRedirect(uri) }
+            session.onSuccess { s ->
+                val chairman = withContext(Dispatchers.IO) { authClient.verifyChairman(s.accessToken) }
+                chairman.onSuccess { ok ->
+                    signedIn = ok
+                    status = if (ok) {
+                        "Google identity verified. Chairman access authorized."
+                    } else {
+                        "Google sign-in succeeded, but this account is not an active Chairman profile."
+                    }
+                }.onFailure { status = it.message ?: "Chairman verification failed." }
+            }.onFailure { status = it.message ?: "Google sign-in failed." }
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -62,6 +94,23 @@ private fun JarvisApp(bleScanner: BleScanner, authClient: JarvisAuthClient) {
             Text("Chairman access • Android • Smartwatch bridge", style = MaterialTheme.typography.bodyMedium)
 
             if (!signedIn) {
+                Button(
+                    onClick = {
+                        status = "Opening Google verification…"
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(authClient.googleOAuthUrl()))
+                        context.startActivity(intent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Continue with Google") }
+
+                Text(
+                    "Chairman Google account: ${BuildConfig.CHAIRMAN_GOOGLE_EMAIL}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                HorizontalDivider()
+                Text("Password sign-in fallback", style = MaterialTheme.typography.titleSmall)
+
                 OutlinedTextField(
                     value = email,
                     onValueChange = { email = it },
@@ -76,7 +125,7 @@ private fun JarvisApp(bleScanner: BleScanner, authClient: JarvisAuthClient) {
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Button(
+                OutlinedButton(
                     onClick = {
                         status = "Signing in…"
                         scope.launch {
@@ -91,7 +140,7 @@ private fun JarvisApp(bleScanner: BleScanner, authClient: JarvisAuthClient) {
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Sign in") }
+                ) { Text("Sign in with password") }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = {
