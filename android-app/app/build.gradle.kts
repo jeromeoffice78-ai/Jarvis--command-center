@@ -17,6 +17,8 @@ android {
 
         buildConfigField("String", "SUPABASE_URL", "\"https://idpneeyysraraznqmiio.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_u1kIRdIQj2I3Tly5Trv0OQ_i-S7JnAw\"")
+        buildConfigField("String", "CHAIRMAN_GOOGLE_EMAIL", "\"jeromeoffice78@gmail.com\"")
+        buildConfigField("String", "OAUTH_REDIRECT_URI", "\"jarviscompanion://auth/callback\"")
     }
 
     buildFeatures {
