@@ -20,8 +20,8 @@ jobs:
       - name: Remove obsolete Actions storage while preserving the newest verified encrypted backup
         env:
           GH_TOKEN: ${{ github.token }}
-          PRESERVE_ARTIFACT_ID: "9988019982"
-          PRESERVE_BACKUP_RUN_ID: "34029144958"
+          PRESERVE_ARTIFACT_ID: "10558165297"
+          PRESERVE_BACKUP_RUN_ID: "35369499778"
         shell: bash
         run: |
           set -euo pipefail
