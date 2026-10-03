@@ -85,8 +85,8 @@ private fun JarvisApp(scanner: BleScanner, auth: JarvisAuthClient, callback: Uri
                                 ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(auth.googleOAuthUrl())))
                             }, Modifier.fillMaxWidth()) { Text("Continue with Google") }
                             Text("Chairman Google account: ${BuildConfig.CHAIRMAN_GOOGLE_EMAIL}")
-                            OutlinedTextField(email, { email = it }, label = { Text("Email") }, Modifier.fillMaxWidth())
-                            OutlinedTextField(password, { password = it }, label = { Text("Password") }, Modifier.fillMaxWidth())
+                            OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email") }, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
                             OutlinedButton(onClick = {
                                 scope.launch {
                                     status = "Signing in…"
